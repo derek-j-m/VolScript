@@ -12,7 +12,6 @@ if [ ! -z "$1" ]
 then
   usage
 fi
-
 echo " "
 echo "____   ____    .__          __  .__.__  .__  __           ________         _____ " 
 echo "\   \ /   /___ |  | _____ _/  |_|__|  | |__|/  |_ ___.__. \_____  \       /  |  |" 
@@ -22,7 +21,7 @@ echo "   \___/ \____/|____(____  /__| |__|____/__||__|  / ____| \_______ \ /\ \_
 echo "                         \/                       \/              \/ \/      |__| "
 echo " "
 echo "The plugins and script is designed for Volatility 2.4. on an Ubuntu 14.0.1 system."
-echo "Requires that nuhup, mactime, yara, and hashdeep are installed."
+echo "Requires that nuhup, parallel, mactime, yara, and hashdeep are installed."
 echo "*Optional are several plugins released by the outstanding memory forensics community."
 echo "**Check the script for details on any non-vanilla plugins."
 echo " "
@@ -54,6 +53,7 @@ mkdir -p "$ram_path"/vol/shots
 mkdir -p "$ram_path"/vol/file_dump
 mkdir -p "$ram_path"/vol/file_dump/pf
 mkdir -p "$ram_path"/vol/file_dump/jpg
+mkdir -p "$ram_path"/vol/file_dump/chrome_extensions
 mkdir -p "$ram_path"/vol/evtlogs
 #mkdir -p "$ram_path"/vol/pcap
 mkdir -p "$ram_path"/vol/proc_dump
@@ -114,24 +114,25 @@ echo "Searching for keywords. Modify to fit."
 echo "Searching for keywords. Modify to fit." >> "$ram_path"/vol/time.log
 echo "Searching for invalid UltraVNC connection attempts"
 echo "Searching for invalid UltraVNC connection attempts" > "$ram_path"/vol/interesting_greps.txt
-grep "Invalid attempt from client" "$ram_path"/vol/gmailstrings.str >> "$ram_path"/vol/interesting_greps.txt
+cat "$ram_path"/vol/gmailstrings.str | parallel --pipe grep -F 'Invalid\ attempt\ from\ client' >> "$ram_path"/vol/interesting_greps.txt
 echo "Searching for succesful UltraVNC connection attempts"
-grep  --after-context=1 "Connection received from" "$ram_path"/vol/gmailstrings.str >> "$ram_path"/vol/interesting_greps.txt
+cat "$ram_path"/vol/gmailstrings.str | parallel --pipe grep --after-context=1 "Connection\ received\ from" >> "$ram_path"/vol/interesting_greps.txt
+echo "Searching for mstscax.dll usage - indicates remote desktop connections." >> "$ram_path"/vol/interesting_greps.txt
 echo "Searching for mstscax.dll usage - indicates remote desktop connections."
-echo "Searching for mstscax.dll usage - indicates remote desktop connections." >> "$ram_path"/vol/time.log
-grep -i --before-context=1 --after-context=1 '\\Windows\\system32\\mstscax.dll' "$ram_path"/vol/gmailstrings.str >> "$ram_path"/vol/interesting_greps.txt
-#echo "Searching for <insert term here> remnants" >> "$ram_path"/vol/interesting_greps.txt
-#grep "term" "$ram_path"/vol/gmailstrings.str >> "$ram_path"/vol/interesting_greps.txt
+cat "$ram_path"/vol/gmailstrings.str | parallel --pipe grep -i --before-context=1 '\\Windows\\system32\\mstscax.dll' >> "$ram_path"/vol/interesting_greps.txt
+
+#echo "Searching for <term> remnants" >> "$ram_path"/vol/interesting_greps.txt
+#grep "<term>" "$ram_path"/vol/gmailstrings.str >> "$ram_path"/vol/interesting_greps.txt
 echo "Searching for Website history remnant" >> "$ram_path"/vol/interesting_greps.txt
 echo "Searching for Website history remnant"
-grep -i "Visited:" "$ram_path"/vol/gmailstrings.str >> "$ram_path"/vol/interesting_greps.txt
+cat "$ram_path"/vol/gmailstrings.str | parallel --pipe grep -i "Visited:" >> "$ram_path"/vol/interesting_greps.txt
 #echo "Searching for gmail posting" >> "$ram_path"/vol/interesting_greps.txt
 #grep -i --after-context=1 "/mail?gxlu" "$ram_path"/vol/gmailstrings.str >> "$ram_path"/vol/interesting_greps.txt
 #echo "Searching for Hotmail posting" >> "$ram_path"/vol/interesting_greps.txt
 #grep -i --after-context=1 "@hotmail.com&pass" "$ram_path"/vol/gmailstrings.str >> "$ram_path"/vol/interesting_greps.txt
-echo "Searching for term &passwd" >> "$ram_path"/vol/interesting_greps.txt
-echo "Searching for term &passwd"
-grep --after-context=1 "&passwd" "$ram_path"/vol/gmailstrings.str >> "$ram_path"/vol/interesting_greps.txt
+echo "Searching for term j_password=" >> "$ram_path"/vol/interesting_greps.txt
+echo "Searching for term j_password="
+cat "$ram_path"/vol/gmailstrings.str | parallel --pipe grep --after-context=1 "j_password=" >> "$ram_path"/vol/interesting_greps.txt
 rm "$ram_path"/vol/gmailstrings.str
 echo "Finished running strings and pdgmail.py" >> "$ram_path"/vol/time.log
 echo "Finished with pdgmail and other grep terms"
@@ -139,22 +140,28 @@ echo "+-------------------------------------------------------------------------
 echo "Continuing Volatility processing."
 echo "Continuing Volatility processing." >> "$ram_path"/vol/time.log
 echo >> "$ram_path"/vol/time.log
-#echo "Processing pstree first"
-#python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile pstree > "$ram_path"/vol/pstree.txt
-echo "Processing a verbose pstree"
-python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile pstree -v >> "$ram_path"/vol/pstree.txt
+echo "Processing a verbose pstree with conversion to csv"
+python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile pstree -v --output=quick > "$ram_path"/vol/pstree.csv
+sed -i 's/Offset|Name/Depth|Offset|Name/g' "$ram_path"/vol/pstree.csv
+sed -i 's/|/,/g' "$ram_path"/vol/pstree.csv
+echo "The following files are run from suspicious locations. Further research is needed for unrecognised files." > "$ram_path"/vol/suspicious_pstree.txt
+cat "$ram_path"/vol/pstree.csv | grep -i -w 'temp\|appdata\|Users' | grep -i -v -w 'remcomsvc.exe\|dumpit.exe\|inetpub\|system32\|chrome\|firefox\|chrome\|mozilla\|spotify\|google\|akamai\|Dropbox' | grep -i -v "ftk" | grep -i -v "program files" | awk 'BEGIN {FS=","; OFS=","; } {print $9}' >> "$ram_path"/vol/suspicious_pstree.txt
+cat "$ram_path"/vol/suspicious_pstree.txt
 echo "Processing cmdline"
 python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile cmdline > "$ram_path"/vol/cmdline.txt
-echo "The following files are run from suspicious locations. Further research is needed for unrecognised files." > "$ram_path"/vol/suspicious_cmdline.txt
-cat "$ram_path"/vol/cmdline.txt | grep -i -w 'temp\|appdata' | grep -i -v -w 'remcomsvc.exe\|dumpit.exe\|inetpub\|system32\|chrome\|firefox\|chrome\|mozilla\|spotify\|google\|akamai' | grep -i -v "ftk" | grep -i -v "program files" | awk '{print $3,$4,$5}' >> "$ram_path"/vol/suspicious_cmdline.txt
+echo "The following files are run from suspicious locations. Compare to the output from pstree." > "$ram_path"/vol/suspicious_cmdline.txt
+cat "$ram_path"/vol/cmdline.txt | grep -i -w 'temp\|appdata' | grep -i -v -w 'remcomsvc.exe\|dumpit.exe\|inetpub\|system32\|chrome\|firefox\|chrome\|mozilla\|spotify\|google\|akamai\|Dropbox' | grep -i -v "ftk" | grep -i -v "program files" | awk '{print $3,$4,$5}' >> "$ram_path"/vol/suspicious_cmdline.txt
 cat "$ram_path"/vol/suspicious_cmdline.txt
 echo "Processing netscan"
-python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile netscan > "$ram_path"/vol/netscan.txt
+nohup python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile netscan > "$ram_path"/vol/netscan.txt 2>&1 &
 
 #---------------------------------------------TESTING---------------------------------------------
 echo "Testing new plugins."
-#echo "Processing editbox."
-#python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile editbox -m > "$ram_path"/vol/editbox.txt
+echo "Processing editbox."
+python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile editbox -m > "$ram_path"/vol/editbox.txt
+
+echo "Processing amcache - Win8 only."
+python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile amcache > "$ram_path"/vol/amcache.txt
 echo "Processing malprocfind."
 python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile malprocfind > "$ram_path"/vol/malprocfind.txt
 echo "Processing chromehistory."
@@ -168,7 +175,7 @@ python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile firef
 echo "Processing firefoxcookies."
 python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile firefoxcookies > "$ram_path"/vol/firefoxcookies.txt
 echo "Processing idxparser."
-python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile idxparser > "$ram_path"/vol/idxparser.txt
+nohup python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile idxparser > "$ram_path"/vol/idxparser.txt 2>&1 &
 echo "Processing prefetchparser."
 python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile prefetchparser > "$ram_path"/vol/prefetchparser.txt
 echo "Processing uninstallinfo."
@@ -192,7 +199,7 @@ python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile clipb
 echo "Processing cmdscan"
 python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile cmdscan > "$ram_path"/vol/cmdscan.txt
 echo "Processing connections"
-python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile connections > "$ram_path"/vol/connections.txt
+nohup python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile connections > "$ram_path"/vol/connections.txt 2>&1 &
 echo "Processing connscan"
 python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile connscan > "$ram_path"/vol/connscan.txt
 echo "Processing consoles"
@@ -201,25 +208,6 @@ python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile conso
 #python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile deskscan > "$ram_path"/vol/deskscan.txt
 echo "Processing devicetree"
 python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile devicetree > "$ram_path"/vol/devicetree.txt
-
-#BE processing:
-echo "Running bulk_extractor on all available cores - grab from https://github.com/simsong/bulk_extractor"
-echo " "
-echo " __________      .__   __    ___________         __                        __                  ____      .________   _______    "
-echo " \______   \__ __|  | |  | __\_   _____/__  ____/  |_____________    _____/  |_  ___________  /_   |     |   ____/   \   _  \   "
-echo "  |    |  _/  |  \  | |  |/ / |    __)_\  \/  /\   __\_  __ \__  \ _/ ___\   __\/  _ \_  __ \  |   |     |____  \    /  /_\  \  "
-echo "  |    |   \  |  /  |_|    <  |        \>    <  |  |  |  | \// __ \\  \___|   | (  <_> )  | \/  |   |     /       \   \  \_/   \ "
-echo "  |______  /____/|____/__|_ \/_______  /__/\_ \ |__|  |__|  (____  /\___  >__|  \____/|__|     |___| /\ /______  / /\ \_____  / "
-echo "         \/                \/        \/      \/                  \/     \/                           \/        \/  \/       \/  "
-echo " "
-echo "+------------------------------------------------------------------------------------------------------------------------------------------------------------------------+" >> "$ram_path"/vol/time.log
-echo "Running bulk_extractor on all available cores" >> "$ram_path"/vol/time.log
-echo " " >> "$ram_path"/vol/time.log
-echo Bulk_Extractor analysis started on: $(date) >> "$ram_path"/vol/time.log
-#Using nohup will allow Volatility to continue running while BE processes the image
-#You can use regular expressions specifying -f for a single search term or -F for a file containing regex terms. 
-nohup bulk_extractor "$ram_path"/"$ram_image" -o "$ram_path"/vol/be_output -e wordlist -x sqlite -b "$ram_path"/vol/banner.log >> "$ram_path"/vol/time.log 2>&1 &
-echo " " >> "$ram_path"/vol/time.log
 
 #echo "Processing dll_dump and dumping all dll files to: "$ram_path"/vol/dll_dump/"
 #echo "Processing dll_dump and dumping all dll files to: "$ram_path"/vol/dll_dump/" >> "$ram_path"/vol/time.log
@@ -260,17 +248,22 @@ grep ".xlsx " "$ram_path"/vol/filescan.txt | sort -u >> "$ram_path"/vol/interest
 grep ".xls " "$ram_path"/vol/filescan.txt | sort -u >> "$ram_path"/vol/interesting_files.txt
 grep ".docx " "$ram_path"/vol/filescan.txt | sort -u >> "$ram_path"/vol/interesting_files.txt
 grep ".doc " "$ram_path"/vol/filescan.txt | sort -u >> "$ram_path"/vol/interesting_files.txt
+grep ".mof " "$ram_path"/vol/filescan.txt | sort -u >> "$ram_path"/vol/interesting_files.txt
 grep ".cs " "$ram_path"/vol/filescan.txt | sort -u >> "$ram_path"/vol/interesting_files.txt
+grep "ultravnc.ini " "$ram_path"/vol/filescan.txt | sort -u >> "$ram_path"/vol/interesting_files.txt
 grep "recentservers.xml " "$ram_path"/vol/filescan.txt | sort -u >> "$ram_path"/vol/interesting_files.txt
 grep ".pf " "$ram_path"/vol/filescan.txt | sort -u >> "$ram_path"/vol/interesting_files_pf.txt
 grep ".dit " "$ram_path"/vol/filescan.txt | sort -u >> "$ram_path"/vol/interesting_files.txt
-grep ".evtx " "$ram_path"/vol/filescan.txt | sort -u >> "$ram_path"/vol/interesting_files.txt
+#grep ".evtx " "$ram_path"/vol/filescan.txt | sort -u >> "$ram_path"/vol/interesting_files.txt
 grep ".psafe3 " "$ram_path"/vol/filescan.txt | sort -u >> "$ram_path"/vol/interesting_files.txt
 grep "mslogon.log " "$ram_path"/vol/filescan.txt | sort -u >> "$ram_path"/vol/interesting_files.txt
+grep "Windows.edb " "$ram_path"/vol/filescan.txt | sort -u >> "$ram_path"/vol/interesting_files.txt
 grep "Wlansvc" "$ram_path"/vol/filescan.txt | grep ".xml \|.xml$" | sort -u >> "$ram_path"/vol/interesting_files.txt
 grep "hosts " "$ram_path"/vol/filescan.txt | sort -u >> "$ram_path"/vol/interesting_files.txt
 grep ".jpg " "$ram_path"/vol/filescan.txt | sort -u > "$ram_path"/vol/interesting_files_jpg.txt
 grep -i "password" "$ram_path"/vol/filescan.txt | sort -u >> "$ram_path"/vol/interesting_files.txt
+grep "manifest.json " "$ram_path"/vol/filescan.txt | sort -u >> "$ram_path"/vol/interesting_files_chrome_extensions.txt
+
 #Second run with end of line regex
 grep "key3.db$" "$ram_path"/vol/filescan.txt | sort -u >> "$ram_path"/vol/interesting_files.txt
 grep "cert8.db$" "$ram_path"/vol/filescan.txt | sort -u >> "$ram_path"/vol/interesting_files.txt
@@ -287,16 +280,20 @@ grep ".xlsx$" "$ram_path"/vol/filescan.txt | sort -u >> "$ram_path"/vol/interest
 grep ".xls$" "$ram_path"/vol/filescan.txt | sort -u >> "$ram_path"/vol/interesting_files.txt
 grep ".docx$" "$ram_path"/vol/filescan.txt | sort -u >> "$ram_path"/vol/interesting_files.txt
 grep ".doc$" "$ram_path"/vol/filescan.txt | sort -u >> "$ram_path"/vol/interesting_files.txt
+grep ".mof$" "$ram_path"/vol/filescan.txt | sort -u >> "$ram_path"/vol/interesting_files.txt
 grep ".cs$" "$ram_path"/vol/filescan.txt | sort -u >> "$ram_path"/vol/interesting_files.txt
+grep "ultravnc.ini$" "$ram_path"/vol/filescan.txt | sort -u >> "$ram_path"/vol/interesting_files.txt
 grep "recentservers.xml$" "$ram_path"/vol/filescan.txt | sort -u >> "$ram_path"/vol/interesting_files.txt
 grep ".pf$" "$ram_path"/vol/filescan.txt | sort -u >> "$ram_path"/vol/interesting_files_pf.txt
 grep ".dit$" "$ram_path"/vol/filescan.txt | sort -u >> "$ram_path"/vol/interesting_files.txt
-grep ".evtx$" "$ram_path"/vol/filescan.txt | sort -u >> "$ram_path"/vol/interesting_files.txt
+#grep ".evtx$" "$ram_path"/vol/filescan.txt | sort -u >> "$ram_path"/vol/interesting_files.txt
 grep ".psafe3$" "$ram_path"/vol/filescan.txt | sort -u >> "$ram_path"/vol/interesting_files.txt
 grep "mslogon.log$" "$ram_path"/vol/filescan.txt | sort -u >> "$ram_path"/vol/interesting_files.txt
+grep "Windows.edb$" "$ram_path"/vol/filescan.txt | sort -u >> "$ram_path"/vol/interesting_files.txt
 grep "hosts$" "$ram_path"/vol/filescan.txt | sort -u >> "$ram_path"/vol/interesting_files.txt
 grep ".jpg$" "$ram_path"/vol/filescan.txt | sort -u >> "$ram_path"/vol/interesting_files_jpg.txt
 grep -i "password" "$ram_path"/vol/filescan.txt | sort -u >> "$ram_path"/vol/interesting_files.txt
+grep "manifest.json$" "$ram_path"/vol/filescan.txt | sort -u >> "$ram_path"/vol/interesting_files_chrome_extensions.txt
 
 cat "$ram_path"/vol/interesting_files.txt | awk '{print $1}' | sort -u > "$ram_path"/vol/carve_files.txt
 for word in $(cat "$ram_path"/vol/carve_files.txt); do python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile dumpfiles --dump-dir "$ram_path"/vol/file_dump/ -n -Q $word; done >> "$ram_path"/vol/file_dump/dumped.txt
@@ -308,6 +305,27 @@ cat "$ram_path"/vol/interesting_files_pf.txt | awk '{print $1}' | sort -u > "$ra
 for word in $(cat "$ram_path"/vol/carve_files_pf.txt); do python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile dumpfiles --dump-dir "$ram_path"/vol/file_dump/pf/ -n -Q $word; done >> "$ram_path"/vol/file_dump/pf/dumped.txt
 echo "Done testing the specified jpg file carving."
 
+cat "$ram_path"/vol/interesting_files_chrome_extensions.txt | awk '{print $1}' | sort -u > "$ram_path"/vol/carve_files_chrome.txt
+for word in $(cat "$ram_path"/vol/carve_files_chrome.txt); do python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile dumpfiles --dump-dir "$ram_path"/vol/file_dump/chrome_extensions/ -n -Q $word; done >> "$ram_path"/vol/file_dump/chrome_extensions/dumped.txt
+
+#BE processing:
+echo "Running bulk_extractor on all available cores - grab from https://github.com/simsong/bulk_extractor"
+echo " "
+echo " __________      .__   __    ___________         __                        __                  ____      .________   _______    "
+echo " \______   \__ __|  | |  | __\_   _____/__  ____/  |_____________    _____/  |_  ___________  /_   |     |   ____/   \   _  \   "
+echo "  |    |  _/  |  \  | |  |/ / |    __)_\  \/  /\   __\_  __ \__  \ _/ ___\   __\/  _ \_  __ \  |   |     |____  \    /  /_\  \  "
+echo "  |    |   \  |  /  |_|    <  |        \>    <  |  |  |  | \// __ \\  \___|   | (  <_> )  | \/  |   |     /       \   \  \_/   \ "
+echo "  |______  /____/|____/__|_ \/_______  /__/\_ \ |__|  |__|  (____  /\___  >__|  \____/|__|     |___| /\ /______  / /\ \_____  / "
+echo "         \/                \/        \/      \/                  \/     \/                           \/        \/  \/       \/  "
+echo " "
+echo "+------------------------------------------------------------------------------------------------------------------------------------------------------------------------+" >> "$ram_path"/vol/time.log
+echo "Running bulk_extractor on all available cores" >> "$ram_path"/vol/time.log
+echo " " >> "$ram_path"/vol/time.log
+echo Bulk_Extractor analysis started on: $(date) >> "$ram_path"/vol/time.log
+#Using nohup will allow Volatility to continue running while BE processes the image
+#You can use regular expressions specifying -f for a single search term or -F for a file containing regex terms. 
+nohup bulk_extractor "$ram_path"/"$ram_image" -o "$ram_path"/vol/be_output -e wordlist -x sqlite -b "$ram_path"/vol/banner.log >> "$ram_path"/vol/be.log 2>&1 &
+echo " " >> "$ram_path"/vol/time.log
 
 echo "Processing prefetch files"
 echo "Processing prefetch files" >> "$ram_path"/vol/time.log
@@ -318,8 +336,13 @@ find "$ram_path"/vol/file_dump -type f -name '*.vacb' | while read f; do mv "$f"
 python /path-to-plugins/plugins/prefetch.py -r "$ram_path"/vol/file_dump/pf >> "$ram_path"/vol/prefetch_files.txt
 echo "Finished processing prefetch files."
 
-echo "Processing gahti"
-python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile gahti > "$ram_path"/vol/gahti.txt
+echo "Processing Google Chrome extensions"
+echo "Processing Google Chrome extensions" >> "$ram_path"/vol/time.log
+egrep --binary-files=text "name.:" "$ram_path"/vol/file_dump/chrome_extensions/*.json >> "$ram_path"/vol/chrome_plugins.txt
+echo "Finished processing chrome extensions"
+
+#echo "Processing gahti"
+#python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile gahti > "$ram_path"/vol/gahti.txt
 echo "Processing getsids"
 python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile getsids > "$ram_path"/vol/getsids.txt
 cat "$ram_path"/vol/getsids.txt |  grep 'Domain\|Enterprise' > "$ram_path"/vol/getsids_domain_admins.txt
@@ -329,7 +352,7 @@ cat "$ram_path"/vol/handles.txt | grep "\LanmanRedirector" > "$ram_path"/vol/han
 echo "Processing hivelist"
 python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile hivelist > "$ram_path"/vol/hivelist.txt
 #Searching for the registry files and their virtual address
-virt_mem_sys=$(grep -i 'system \|system\>$' "$ram_path"/vol/hivelist.txt | awk '{print $1}')
+virt_mem_sys=$(grep 'SYSTEM \|SYSTEM\>$' "$ram_path"/vol/hivelist.txt | awk '{print $1}')
 virt_mem_SAM=$(grep 'SAM \|SAM\>' "$ram_path"/vol/hivelist.txt | awk '{print $1}')
 virt_mem_sec=$(grep 'SECURITY \|SECURITY\>' "$ram_path"/vol/hivelist.txt | awk '{print $1}')
 echo "Preparing to automatically parse the registry to extract the hashes - x86 only. Running: vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile hashdump -y $virt_mem_sys -s $virt_mem_SAM"
@@ -339,12 +362,12 @@ echo "Processing hashdump" >> "$ram_path"/vol/time.log
 python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile hashdump -y $virt_mem_sys -s $virt_mem_SAM >> "$ram_path"/vol/hashdump.txt
 echo "Processing hivescan"
 python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile hivescan > "$ram_path"/vol/hivescan.txt
-echo "Processing idt"
-python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile idt > "$ram_path"/vol/idt.txt
+#echo "Processing idt"
+#python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile idt > "$ram_path"/vol/idt.txt
 echo "Processing iehistory"
 python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile iehistory > "$ram_path"/vol/iehistory.txt
 echo "Processing iehistory -L (LEAK - Deleted)"
-python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile iehistory -L >> "$ram_path"/vol/iehistory.txt
+nohup python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile iehistory -L >> "$ram_path"/vol/iehistory.txt 2>&1 &
 echo "Processing imageinfo"
 python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile imageinfo > "$ram_path"/vol/imageinfo.txt
 echo "Processing impscan"
@@ -365,7 +388,7 @@ python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile malsy
 #python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile messagehooks > "$ram_path"/vol/messagehooks.txt
 
 echo "Processing lsass output using the mimikatz plugin - must grab it from https://github.com/dfirfpi/hotoloti and put it in the plugin folder"
-python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile mimikatz > "$ram_path"/vol/mimikatz.txt
+nohup python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile mimikatz > "$ram_path"/vol/mimikatz.txt 2>&1 &
 
 echo "Processing pslist"
 python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile pslist > "$ram_path"/vol/pslist.txt
@@ -374,36 +397,47 @@ python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile pssca
 echo "Processing psscan dot graph version"
 python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile psscan --output=dot --output-file="$ram_path"/vol/psscan.dot
 #The next line searches against a known good whitelist of services - not a home-run but a simple check.
-cat "$ram_path"/vol/psscan.txt | awk '{print $2}' | grep -vwf /path-to-files/yarasigs/whitelist.txt | sort -u > "$ram_path"/vol/psscan_outliers.txt
+cat "$ram_path"/vol/psscan.txt | awk '{print $2}' | grep -vwf /path-to-files/whitelist.txt | sort -u > "$ram_path"/vol/psscan_outliers.txt
+cat "$ram_path"/vol/pslist.txt | awk '{print $2}' | grep -vwf /path-to-files/whitelist.txt | sort -u >> "$ram_path"/vol/psscan_outliers.txt
 echo "The following service(s) are not in the whitelist."
-cat "$ram_path"/vol/psscan.txt | awk '{print $2}' | grep -vwf /path-to-files/yarasigs/whitelist.txt | sort -u
+cat "$ram_path"/vol/psscan_outliers.txt | sort -u | uniq
 echo " "
 echo "Creating a list for VirusTotal based on the outliers..."
 echo "Creating a list for VirusTotal based on the outliers..." >> "$ram_path"/vol/time.log
 #The next line is for grabbing the PID.
-#cat "$ram_path"/vol/psscan.txt | grep -vwf /path-to-files/yarasigs/whitelist.txt | tr -s ' ' | cut -d ' ' -f3 | sed -n -e 'H;${x;s/\n/,/g;s/^,//;p;}' > "$ram_path"/vol/virustotal_hash.txt
+#cat "$ram_path"/vol/psscan.txt | grep -vwf /path-to-files/whitelist.txt | tr -s ' ' | cut -d ' ' -f3 | sed -n -e 'H;${x;s/\n/,/g;s/^,//;p;}' > "$ram_path"/vol/virustotal_hash.txt
 #The next line is for grabbing the filename.
-cat "$ram_path"/vol/psscan.txt | awk '{print $2}' | grep -vwf /path-to-files/yarasigs/whitelist.txt | sort -u | uniq > "$ram_path"/vol/virustotal_hash.txt
+cat "$ram_path"/vol/psscan_outliers.txt | sort -u | uniq > "$ram_path"/vol/virustotal_hash.txt
 
 echo "Processing psxview"
 python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile psxview > "$ram_path"/vol/psxview.txt
-#echo "Processing openvpn"
-#python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile openvpn > "$ram_path"/vol/openvpn.txt
+echo "Processing openvpn"
+python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile openvpn > "$ram_path"/vol/openvpn.txt
 #echo "Processing modscan"
 #python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile modscan > "$ram_path"/vol/modscan.txt
 echo "Processing mutantscan"
 python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile mutantscan --silent > "$ram_path"/vol/mutantscan.txt
 echo "Processing notepad"
-python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile notepad > "$ram_path"/vol/notepad.txt
+nohup python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile notepad > "$ram_path"/vol/notepad.txt 2>&1 &
 echo "Processing pooltracker"
-python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile pooltracker > "$ram_path"/vol/pooltracker.txt
+nohup python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile pooltracker > "$ram_path"/vol/pooltracker.txt 2>&1 &
+
 echo "Processing multiple printkey registry queries"
-python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile printkey -K "SAM\Domains\Account\Users" > "$ram_path"/vol/printkey.txt
-python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile printkey -K "SAM\Domains\Account\Users\Names" >> "$ram_path"/vol/printkey_secrets.txt
-#For plaintext Secret phrase export the following for each Names entry: printkey -K "SAM\Domains\Account\Users\<00000XXX>"
-python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile printkey -K "SAM\Domains\Account\Users\000001F4" >> "$ram_path"/vol/printkey_secrets.txt
-python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile printkey -K "SAM\Domains\Account\Users\000001F5" >> "$ram_path"/vol/printkey_secrets.txt
-python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile printkey -K "SAM\Domains\Account\Users\000003EC" >> "$ram_path"/vol/printkey_secrets.txt
+echo "Manually pulling the IP information from the registry"
+python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile printkey -o $virt_mem_sys -K "ControlSet001\services\Tcpip\Parameters\Interfaces" | grep "{" | awk '{print $2}' > "$ram_path"/vol/printkey_interfaces.txt
+for word in $(cat "$ram_path"/vol/printkey_interfaces.txt); do python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile printkey -o $virt_mem_sys -K "ControlSet001\services\Tcpip\Parameters\Interfaces""\\""$word"; done >> "$ram_path"/vol/printkey_interfaces_output.txt
+#Removing null characters from file for parsing
+sed -i 's/\x0//g' "$ram_path"/vol/printkey_interfaces_output.txt
+echo "Potential IP addresses from registry: " > "$ram_path"/vol/printkey_ipaddress.txt
+cat "$ram_path"/vol/printkey_interfaces_output.txt | egrep --binary-files=text "IPAddress" | awk '{print $5}' >> "$ram_path"/vol/printkey_ipaddress.txt
+echo "Potential DNS Name server addresses from registry: " >> "$ram_path"/vol/printkey_ipaddress.txt
+cat "$ram_path"/vol/printkey_interfaces_output.txt | egrep --binary-files=text "NameServer" | cut -d \) -f 2 >> "$ram_path"/vol/printkey_ipaddress.txt
+echo "Done grabbing IP information"
+
+echo "Grabbing plaintext Secret phrase (Win7) by exporting the following for each Names entry: SAM\Domains\Account\Users\<00000XXX>"
+python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile printkey -K "SAM\Domains\Account\Users" |  grep "00000" | cut -d \) -f 2 | awk '{print $1}' > "$ram_path"/vol/printkey.txt
+for word in $(cat "$ram_path"/vol/printkey.txt); do python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile printkey -K "SAM\Domains\Account\Users""\\""$word"; done >> "$ram_path"/vol/printkey_secrets.txt
+
 echo "Processing printkey - runonce"
 echo "Microsoft\Windows\CurrentVersion\Run" > "$ram_path"/vol/printkey_runs.txt
 python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile printkey -K "Software\Microsoft\Windows\CurrentVersion\Run" >> "$ram_path"/vol/printkey_runs.txt
@@ -417,16 +451,28 @@ echo "Classes\exefile\shell\open\command" >> "$ram_path"/vol/printkey_runs.txt
 python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile printkey -K "Classes\exefile\shell\open\command" >> "$ram_path"/vol/printkey_runs.txt
 echo "Software\Microsoft\Command Processor\AutoRun" >> "$ram_path"/vol/printkey_runs.txt
 python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile printkey -K "Software\Microsoft\Command Processor\AutoRun" >> "$ram_path"/vol/printkey_runs.txt
+python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile printkey -K "Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Run" >> "$ram_path"/vol/printkey_runs.txt
+python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile printkey -K "Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Runonce" >> "$ram_path"/vol/printkey_runs.txt
+python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile printkey -K "Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Policies\Explorer\Run" >> "$ram_path"/vol/printkey_runs.txt
+python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile printkey -K "Software\Microsoft\Windows\CurrentVersion\RunOnceEx" >> "$ram_path"/vol/printkey_runs.txt
+python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile printkey -K "HKEY_LOCAL_MACHINE\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\RunOnceEx" >> "$ram_path"/vol/printkey_runs.txt
+echo "Time Zone" > "$ram_path"/vol/printkey_forensic_artifacts.txt
+python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile printkey -K "ControlSet001\Control\TimeZoneInformation" >> "$ram_path"/vol/printkey_forensic_artifacts.txt
+echo "WindowsUpdate" >> "$ram_path"/vol/printkey_forensic_artifacts.txt
+python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile printkey -K "Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update" >> "$ram_path"/vol/printkey_forensic_artifacts.txt
+sed -i 's/\x0//g' "$ram_path"/vol/printkey_forensic_artifacts.txt
+
+
 echo "Processing privs"
 python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile privs > "$ram_path"/vol/privs.txt
 echo "Finding odd privileges"
 cat "$ram_path"/vol/privs.txt | awk '{print $4}' | sort | uniq -c | grep -i -e "sebackupprivilege" -e "sedebugprivilege" -e "seloaddriverprivilege" -e "sechangenotifyprivilege" -e "seshutdownprivilege" > "$ram_path"/vol/privs_interesting.txt
 echo "Processing procdump and dumping to: "$ram_path"/vol/proc_dump/"
-python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile procdump -D "$ram_path"/vol/proc_dump/ > "$ram_path"/vol/procdump.txt
+nohup python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile procdump -D "$ram_path"/vol/proc_dump/ > "$ram_path"/vol/procdump.txt 2>&1 &
 echo "Processing security - must grab the plugin from https://twitter.com/CGurkok and put it in the plugin folder"
 python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile security > "$ram_path"/vol/security.txt
 echo "Processing screenshot and dumping the files to: "$ram_path"/vol/shots/"
-python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile screenshot -D "$ram_path"/vol/shots/ > "$ram_path"/vol/screenshot.txt
+nohup python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile screenshot -D "$ram_path"/vol/shots/ > "$ram_path"/vol/screenshot.txt 2>&1 &
 echo "Processing sessions"
 python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile sessions > "$ram_path"/vol/sessions.txt
 echo "Processing shimcache (new)"
@@ -443,22 +489,22 @@ echo "Processing threads"
 #python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile threads -F AttachedProcess > "$ram_path"/vol/threads_attachedprocess.txt
 echo "Processing thrdscan"
 #python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile thrdscan > "$ram_path"/vol/thrdscan.txt
-#echo "Processing orphan threads"
-#python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile threads -F OrphanThread > "$ram_path"/vol/threads_orphan.txt
+echo "Processing orphan threads"
+python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile threads -F OrphanThread > "$ram_path"/vol/threads_orphan.txt
 #echo "Processing timers"
 python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile timers > "$ram_path"/vol/timers.txt
-#echo "Processing truecryptsummary"
-#python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile truecryptsummary > "$ram_path"/vol/truecryptsummary.txt
-#echo "Processing truecryptpassphrase"
-#python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile truecryptpassphrase > "$ram_path"/vol/truecryptpassphrase.txt
+echo "Processing truecryptsummary"
+python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile truecryptsummary > "$ram_path"/vol/truecryptsummary.txt
+echo "Processing truecryptpassphrase"
+python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile truecryptpassphrase > "$ram_path"/vol/truecryptpassphrase.txt
 #echo "Processing twitter - must grab the plugin from https://github.com/jeffbryner/volatilityPlugins and put it in the plugin folder"
 #python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile twitter > "$ram_path"/vol/twitter.txt
 echo "Processing userassist"
 python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile userassist > "$ram_path"/vol/userassist.txt
 #echo "Processing vadinfo"
 #python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile vadinfo > "$ram_path"/vol/vadinfo.txt
-echo "Processing vadtree"
-python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile vadtree --output=dot --output-file="$ram_path"/vol/vadtree.dot > "$ram_path"/vol/vadtree.txt
+#echo "Processing vadtree"
+#python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile vadtree --output=dot --output-file="$ram_path"/vol/vadtree.dot > "$ram_path"/vol/vadtree.txt
 #echo "Processing vadwalk"
 #python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile vadwalk > "$ram_path"/vol/vadwalk.txt
 echo "Processing verinfo"
@@ -468,7 +514,7 @@ echo "Finding shellbags - testing"
 ls -l "$ram_path"/vol/file_dump | grep "UsrClass.dat" | awk '{print $9}' > "$ram_path"/vol/shellbag_manual_scan.txt
 ls -l "$ram_path"/vol/file_dump | grep "NTUSER.DAT" | awk '{print $9}' >> "$ram_path"/vol/shellbag_manual_scan.txt
 echo "Finding shellbags - testing" > "$ram_path"/vol/shellbag_manual_results.txt
-for word2 in $(cat "$ram_path"/vol/shellbag_manual_scan.txt); do python /path-to-files/yarasigs/shellbags-master/shellbags.py "$ram_path"/vol/file_dump/$word2; done >> "$ram_path"/vol/shellbag_manual_results.txt
+for word2 in $(cat "$ram_path"/vol/shellbag_manual_scan.txt); do python /path-to-files/shellbags-master/shellbags.py "$ram_path"/vol/file_dump/$word2; done >> "$ram_path"/vol/shellbag_manual_results.txt
 echo "Finished manually looking for shellbags"
 
 echo "Testing VirusTotal API from https://github.com/Sebastienbr/Volatility. Running against these processes:"
@@ -480,7 +526,9 @@ grep -e "File:" -e "MD5:" -e "ratio:" "$ram_path"/vol/virustotal_output.txt
 echo " "
 echo "Processing yarascan - must have prereqs installed for Yara and Yara-Python"
 echo "This is in testing mode. Takes a long time and there will be FP."
-python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile yarascan -y /path-to-files/ye_all_include.yar > "$ram_path"/vol/yarascan_git.txt
+nohup python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile yarascan -y /pathtofiles/ye_memory.yar > "$ram_path"/vol/yarascan_git.txt 2>&1 &
+#echo "Processing yarascan against the GIT repo"
+#python $vol_path/vol.py -f "$ram_path"/"$ram_image" --profile=$ram_profile yarascan -y /pathtofiles/ye_all.yar > "$ram_path"/vol/yarascan_git_all.txt
 echo "Grabbing md5 hash." >> "$ram_path"/vol/time.log
 echo "Filename:" >> "$ram_path"/vol/time.log
 cat "$ram_path"/vol/be_output/report.xml | grep "image_filename" | cut -d '>' -f2 | cut -d '<' -f1 >> "$ram_path"/vol/time.log
@@ -495,7 +543,7 @@ echo "Creating timeline at: $(date)"
 echo Creating timeline at: $(date) >> "$ram_path"/vol/time.log
 echo "Creating timeline. Takes a while."
 echo "Processing shellbags"
-python $vol_path/vol.py --plugins=$vol_path/contrib/plugins -f "$ram_path"/"$ram_image" --profile=$ram_profile shellbags --output=body > "$ram_path"/vol/shellbags.txt
+python $vol_path/vol.py --plugins=$vol_path/contrib/plugins -f "$ram_path"/"$ram_image" --profile=$ram_profile shellbags > "$ram_path"/vol/shellbags.txt
 echo "Processing mftparser"
 python $vol_path/vol.py --plugins=$vol_path/contrib/plugins -f "$ram_path"/"$ram_image" --profile=$ram_profile mftparser --output=body > "$ram_path"/vol/mft.txt
 cat "$ram_path"/vol/mft.txt | grep "DATA ADS" > "$ram_path"/vol/mft_odd.txt
@@ -504,6 +552,34 @@ echo "Processing timeliner"
 python $vol_path/vol.py --plugins=$vol_path/contrib/plugins -f "$ram_path"/"$ram_image" --profile=$ram_profile timeliner --output=body > "$ram_path"/vol/timeliner.txt
 #echo "Processing usnparser - testing. Needs to be placed in the plugins folder from https://github.com/tomspencer/volatility"
 #python $vol_path/vol.py --plugins=$vol_path/contrib/plugins -f "$ram_path"/"$ram_image" --profile=$ram_profile usnparser --output=body > "$ram_path"/vol/usnparser.txt
+echo "+------------------------------------------------------------------------------------------------------------------------------------------------------------------------+" >> "$ram_path"/vol/time.log
+echo "Attempting to make a simple report"
+touch "$ram_path"/report.txt
+head -n 6 "$ram_path"/vol/time.log >> "$ram_path"/report.txt
+echo "Analysis of the system named:" >> "$ram_path"/report.txt
+grep "COMPUTERNAME" "$ram_path"/vol/envars.txt | awk '{print $5}' | uniq >> "$ram_path"/report.txt
+echo "Analyzed system was detected as: $ram_profile" >> "$ram_path"/report.txt
+echo " " >> "$ram_path"/report.txt
+cat "$ram_path"/vol/printkey_ipaddress.txt >> "$ram_path"/report.txt
+echo "Last time Windows Update was run:" >> "$ram_path"/report.txt
+cat "$ram_path"/vol/printkey_forensic_artifacts.txt | grep --after-context=1 "Auto Update" | grep "Last updated" | awk '{print $3, $4, $5}' >> "$ram_path"/report.txt
+echo "Time zone information:" >> "$ram_path"/report.txt
+cat "$ram_path"/vol/printkey_forensic_artifacts.txt |  grep "TimeZoneKeyName" | cut -f '2' -d ')' >> "$ram_path"/report.txt
+echo "Processes not in the whitelist" >> "$ram_path"/report.txt
+echo "------------------------------" >> "$ram_path"/report.txt
+cat "$ram_path"/vol/psscan_outliers.txt >> "$ram_path"/report.txt
+echo " " >> "$ram_path"/report.txt
+echo "VT results of the processes" >> "$ram_path"/report.txt
+echo "------------------------------" >> "$ram_path"/report.txt
+grep -e "File:" -e "MD5:" -e "ratio:" "$ram_path"/vol/virustotal_output.txt  >> "$ram_path"/report.txt
+echo " " >> "$ram_path"/report.txt
+echo "Yara results:" >> "$ram_path"/report.txt
+echo "------------------------------" >> "$ram_path"/report.txt
+grep -v -i "mbam.exe" "$ram_path"/vol/yarascan_git.txt | grep -v -i "msmpeng.exe" | grep -v -i "vpnui.exe" | grep "Owner: " >> "$ram_path"/report.txt
+grep -v -i "mbam.exe" "$ram_path"/vol/yarascan_git.txt | grep -v -i "msmpeng.exe" | grep -v -i "vpnui.exe" | grep --after-context=16 "Owner: " | tail -n 16 | awk '{print $18}' >> "$ram_path"/report.txt
+echo " " >> "$ram_path"/report.txt
+cat "$ram_path"/vol/suspicious_cmdline.txt >> "$ram_path"/report.txt
+echo "Finished making the report"
 echo "+------------------------------------------------------------------------------------------------------------------------------------------------------------------------+" >> "$ram_path"/vol/time.log
 echo Volatility analysis finished on: $(date) >> "$ram_path"/vol/time.log
 echo "Completed processing of timeline. Creating CSV: "$ram_path"/vol/timeline.csv"
