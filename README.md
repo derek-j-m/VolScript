@@ -1,11 +1,12 @@
 # VolScript
 This is my version of a "simple" shell script for automated processing of Windows RAM captures using Volatility 2.6. I've been using a similar script for years, and have slowly been improving it as I see interesting new ideas come up in the awesome InfoSec community. It got pretty long, but I've tried to make it modular and easy to read. It runs what I would call is the kitchen sink of Volatility commands and saves their output into a new folder for full analysis.
 Hopefully somebody else can make use of this version, and if anyone has ideas on how to improve it please don't hesitate to reach out.
+
 Enjoy - warts and all!
 
 Features:
 Automatic detection of the Windows version based on the output of kdbgscan.
-Copying of the RAM image to a scrath or ramdisk location for faster processing.
+Copying of the RAM image to a scratch or ramdisk location for faster processing.
 "Multi-threaded" processing and string searching using nohup or other built in bash trickery.
 An automated simplistic report will be generated at the end.
 Automated virustotal checking using MalwOverview.
