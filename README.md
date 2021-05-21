@@ -5,12 +5,12 @@ Hopefully somebody else can make use of this version, and if anyone has ideas on
 Enjoy - warts and all!
 
 Features:
-Automatic detection of the Windows version based on the output of kdbgscan.
-Copying of the RAM image to a scratch or ramdisk location for faster processing.
-"Multi-threaded" processing and string searching using nohup or other built in bash trickery.
-An automated simplistic report will be generated at the end.
-Automated virustotal checking using MalwOverview.
-Bulk_extractor and strings are part of the process. 
+ - Automatic detection of the Windows version based on the output of kdbgscan.
+ - Copying of the RAM image to a scratch or ramdisk location for faster processing.
+ - "Multi-threaded" processing and string searching using nohup or other built in bash trickery.
+ - An automated simplistic report will be generated at the end.
+ - Automated virustotal checking using MalwOverview.
+ - Bulk_extractor and strings are part of the process. 
 
 
 Requirements:
